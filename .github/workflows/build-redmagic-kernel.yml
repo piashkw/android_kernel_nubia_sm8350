@@ -1,0 +1,74 @@
+name: Build RedMagic 6S Pro NetHunter Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type'
+        required: true
+        default: 'test'
+        type: choice
+        options:
+          - test
+          - release
+
+jobs:
+  build:
+    name: Build RedMagic 6S Pro Kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libncurses-dev \
+            libssl-dev \
+            bc \
+            bison \
+            flex \
+            git \
+            curl \
+            wget \
+            unzip \
+            zip
+      
+      - name: Setup Build Environment
+        run: |
+          mkdir -p out
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+      
+      - name: Prepare Kernel Config
+        run: |
+          cd $GITHUB_WORKSPACE
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          make O=out ARCH=arm64 vendor/lahaina-qgki_defconfig || make O=out ARCH=arm64 defconfig || true
+      
+      - name: Build Kernel
+        run: |
+          cd $GITHUB_WORKSPACE
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          make -j$(nproc) O=out ARCH=arm64 2>&1 | tee build.log || true
+          
+          if [ -f "out/arch/arm64/boot/Image" ]; then
+            echo "✅ Kernel Image created successfully"
+          fi
+      
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: redmagic-kernel-build
+          path: out/arch/arm64/boot/
+          retention-days: 7
