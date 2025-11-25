@@ -40,35 +40,81 @@ jobs:
             curl \
             wget \
             unzip \
-            zip
+            zip \
+            cpio \
+            libelf-dev \
+            pahole
       
       - name: Setup Build Environment
         run: |
           mkdir -p out
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
       
       - name: Prepare Kernel Config
         run: |
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          make O=out ARCH=arm64 vendor/lahaina-qgki_defconfig || make O=out ARCH=arm64 defconfig || true
+          
+          if [ -f "arch/arm64/configs/vendor/lahaina-qgki_defconfig" ]; then
+            echo "Using vendor/lahaina-qgki_defconfig"
+            make O=out ARCH=arm64 vendor/lahaina-qgki_defconfig
+          elif [ -f "arch/arm64/configs/lahaina_defconfig" ]; then
+            echo "Using lahaina_defconfig"
+            make O=out ARCH=arm64 lahaina_defconfig
+          else
+            echo "Using default defconfig"
+            make O=out ARCH=arm64 defconfig
+          fi
       
-      - name: Build Kernel
+      - name: Build Kernel Image
         run: |
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          make -j$(nproc) O=out ARCH=arm64 2>&1 | tee build.log || true
+          
+          echo "Starting Kernel Build..."
+          make -j$(nproc) O=out ARCH=arm64 2>&1 | tee build.log
           
           if [ -f "out/arch/arm64/boot/Image" ]; then
-            echo "✅ Kernel Image created successfully"
+            echo "Kernel Image built successfully!"
+            ls -lah out/arch/arm64/boot/Image
+          else
+            echo "Kernel Image not found!"
+            exit 1
           fi
       
-      - name: Upload Artifacts
+      - name: Collect Build Artifacts
+        run: |
+          cd $GITHUB_WORKSPACE
+          mkdir -p artifacts
+          
+          if [ -f "out/arch/arm64/boot/Image" ]; then
+            cp out/arch/arm64/boot/Image artifacts/
+            echo "Copied kernel Image"
+          fi
+          
+          if [ -f "out/.config" ]; then
+            cp out/.config artifacts/kernel_config
+            echo "Copied kernel config"
+          fi
+          
+          if [ -f "build.log" ]; then
+            cp build.log artifacts/
+            echo "Copied build log"
+          fi
+          
+          echo "Artifacts collected:"
+          ls -lah artifacts/
+          du -sh artifacts/
+      
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: redmagic-kernel-build
-          path: out/arch/arm64/boot/
+          path: artifacts/
           retention-days: 7
+          compression-level: 0
