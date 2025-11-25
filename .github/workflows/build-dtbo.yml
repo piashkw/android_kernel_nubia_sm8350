@@ -1,0 +1,120 @@
+name: Build DTBO (Device Tree Blob Overlay)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'test'
+        type: choice
+        options:
+          - test
+          - release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: lineage-20
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            bc \
+            bison \
+            flex \
+            libelf-dev \
+            libssl-dev \
+            device-tree-compiler \
+            python3 \
+            python3-dev \
+            git \
+            curl \
+            wget \
+            ccache \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu
+
+      - name: Setup Build Environment
+        run: |
+          mkdir -p out
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export KBUILD_BUILD_USER=RedMagic
+          export KBUILD_BUILD_HOST=GitHub
+
+      - name: Build DTBO
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export KBUILD_BUILD_USER=RedMagic
+          export KBUILD_BUILD_HOST=GitHub
+          
+          # Load kernel configuration
+          if [ -f "arch/arm64/configs/redmagic_defconfig" ]; then
+            cp arch/arm64/configs/redmagic_defconfig out/.config
+          elif [ -f "arch/arm64/configs/gki_defconfig" ]; then
+            cp arch/arm64/configs/gki_defconfig out/.config
+          else
+            make -C . O=out redmagic_defconfig
+          fi
+          
+          # Compile device tree
+          echo "Compiling device tree overlays..."
+          make -C . O=out dtbs -j$(nproc)
+          
+          # Compile DTBO specifically
+          if [ -d "arch/arm64/boot/dts/qcom" ]; then
+            echo "Building DTBO from qcom dts files..."
+            find arch/arm64/boot/dts/qcom -name "*dtbo*" -type f
+          fi
+          
+          # List generated DTB files
+          echo "Generated DTB files:"
+          find out -name "*.dtb" -o -name "*.dtbo" | head -20
+
+      - name: Verify DTBO Build
+        run: |
+          echo "DTBO Build Verification:"
+          if [ -f "out/arch/arm64/boot/dts/qcom/sm8350.dtb" ]; then
+            echo "✓ SM8350 DTB found"
+            ls -lh out/arch/arm64/boot/dts/qcom/sm8350.dtb
+          fi
+          
+          if [ -f "out/arch/arm64/boot/dts/qcom/sm8350-redmagic.dtbo" ]; then
+            echo "✓ RedMagic DTBO found"
+            ls -lh out/arch/arm64/boot/dts/qcom/sm8350-redmagic.dtbo
+          fi
+          
+          # Count total DTB files
+          DTB_COUNT=$(find out -name "*.dtb" -o -name "*.dtbo" | wc -l)
+          echo "Total DTB/DTBO files generated: $DTB_COUNT"
+
+      - name: Upload DTBO Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtbo-${{ github.run_number }}
+          path: |
+            out/arch/arm64/boot/dts/**/*.dtb
+            out/arch/arm64/boot/dts/**/*.dtbo
+          retention-days: 30
+
+      - name: Upload Build Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dtbo-build-log-${{ github.run_number }}
+          path: |
+            .config
+            out/.config
+          retention-days: 7
