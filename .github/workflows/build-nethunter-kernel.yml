@@ -1,0 +1,99 @@
+name: Build NetHunter Kernel with Security Features
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'test'
+        type: choice
+        options:
+          - test
+          - release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: lineage-20
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential bc bison flex libelf-dev libssl-dev \
+            device-tree-compiler python3 python3-dev git curl wget \
+            ccache gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu libncurses-dev openssl
+
+      - name: Configure Kernel for NetHunter
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          mkdir -p out
+          
+          if [ -f "arch/arm64/configs/redmagic_defconfig" ]; then
+            cp arch/arm64/configs/redmagic_defconfig out/.config
+          else
+            make -C . O=out redmagic_defconfig
+          fi
+          
+          cat >> out/.config << 'EOF'
+          CONFIG_WIRELESS_EXT=y
+          CONFIG_WEXT_CORE=y
+          CONFIG_PACKET=y
+          CONFIG_NETFILTER=y
+          CONFIG_NETFILTER_ADVANCED=y
+          CONFIG_NF_CONNTRACK=m
+          CONFIG_NF_TABLES=m
+          CONFIG_MAC80211=m
+          CONFIG_CFG80211=m
+          CONFIG_IP_NF_FILTER=m
+          CONFIG_IP_NF_NAT=m
+          CONFIG_IPV6=y
+          CONFIG_USB=y
+          CONFIG_MODULES=y
+          CONFIG_MODULE_UNLOAD=y
+          EOF
+          
+          make -C . O=out olddefconfig
+
+      - name: Build NetHunter Kernel
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export KBUILD_BUILD_USER=RedMagic
+          export KBUILD_BUILD_HOST=GitHub
+          make -C . O=out -j$(nproc)
+
+      - name: Build Device Tree
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          make -C . O=out dtbs -j$(nproc)
+
+      - name: Verify NetHunter Features
+        run: |
+          echo "NetHunter Kernel Features:"
+          grep "CONFIG_WIRELESS_EXT=y" out/.config && echo "✓ Wireless Extensions"
+          grep "CONFIG_PACKET=y" out/.config && echo "✓ Packet Sniffing"
+          grep "CONFIG_NETFILTER=y" out/.config && echo "✓ Netfilter"
+          grep "CONFIG_MAC80211=m" out/.config && echo "✓ Monitor Mode"
+          grep "CONFIG_USB=y" out/.config && echo "✓ USB Support"
+
+      - name: Upload Kernel Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nethunter-kernel-${{ github.run_number }}
+          path: |
+            out/arch/arm64/boot/Image
+            out/arch/arm64/boot/dts/**/*.dtb
+            out/.config
+          retention-days: 30
