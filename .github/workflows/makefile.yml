@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     name: Build Kernel
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Build Kernel
         uses: dabao1955/kernel_build_action@main
@@ -21,4 +21,4 @@ jobs:
           nethunter: true
           anykernel3: true
           release: true
-          access-token: ${{ secrets.GH_TOKEN }}
+          access-token: ${{ secrets.GITHUB_TOKEN }}
