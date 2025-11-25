@@ -1,0 +1,219 @@
+name: Build NetHunter Kernel for Red Magic 6S Pro
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+          - test
+      kernel_branch:
+        description: 'Kernel Branch'
+        required: true
+        default: 'lineage-20'
+        type: string
+
+env:
+  KERNEL_REPO: https://github.com/piashlofkw-cyber/android_kernel_nubia_sm8350
+  KERNEL_BRANCH: lineage-20
+  DEVICE_CODENAME: nubia_sm8350
+  DEVICE_NAME: Red Magic 6S Pro
+  DEFCONFIG: lahaina-qgki_defconfig
+  ARCH: arm64
+  ANDROID_VERSION: 13
+  CLANG_VERSION: r450784d
+
+jobs:
+  build:
+    name: Build NetHunter Kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libssl-dev \
+            libelf-dev \
+            bc \
+            bison \
+            flex \
+            git \
+            curl \
+            wget \
+            zip \
+            unzip \
+            tar \
+            gzip \
+            python3 \
+            python3-pip \
+            ccache
+          
+          pip3 install -q --user -U Pillow pycryptodome
+
+      - name: Download Clang Toolchain
+        run: |
+          echo "Downloading Clang ${{ env.CLANG_VERSION }}..."
+          mkdir -p ~/toolchains
+          cd ~/toolchains
+          
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-${{ env.CLANG_VERSION }}.tar.gz
+          tar -xzf clang-${{ env.CLANG_VERSION }}.tar.gz
+          
+          wget -q https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/main.tar.gz
+          mkdir -p gcc
+          tar -xzf main.tar.gz -C gcc
+          
+          echo "CLANG_PATH=~/toolchains/clang" >> $GITHUB_ENV
+          echo "GCC_PATH=~/toolchains/gcc" >> $GITHUB_ENV
+
+      - name: Download NetHunter Patches
+        run: |
+          echo "Downloading NetHunter patches..."
+          mkdir -p ~/nethunter
+          cd ~/nethunter
+          
+          git clone --depth=1 https://github.com/offensive-security/kali-nethunter-kernel.git
+          
+          echo "NETHUNTER_PATH=~/nethunter/kali-nethunter-kernel" >> $GITHUB_ENV
+
+      - name: Apply NetHunter Patches
+        run: |
+          echo "Applying NetHunter patches for ${{ env.DEVICE_NAME }}..."
+          cd $GITHUB_WORKSPACE
+          
+          if [ -d "${{ env.NETHUNTER_PATH }}/nethunter-patches" ]; then
+            for patch in ${{ env.NETHUNTER_PATH }}/nethunter-patches/*.patch; do
+              if [ -f "$patch" ]; then
+                echo "Applying patch: $(basename $patch)"
+                git apply "$patch" || echo "Patch $(basename $patch) may not apply cleanly"
+              fi
+            done
+          fi
+
+      - name: Configure Kernel
+        run: |
+          echo "Configuring kernel with ${{ env.DEFCONFIG }}..."
+          cd $GITHUB_WORKSPACE
+          
+          export PATH="${{ env.CLANG_PATH }}/bin:${{ env.GCC_PATH }}/bin:$PATH"
+          export CROSS_COMPILE=${{ env.GCC_PATH }}/bin/aarch64-linux-android-
+          export CC=${{ env.CLANG_PATH }}/bin/clang
+          
+          make O=out ARCH=${{ env.ARCH }} ${{ env.DEFCONFIG }}
+          
+          echo "CONFIG_KPROBES=y" >> out/.config
+          echo "CONFIG_HAVE_KPROBES=y" >> out/.config
+          echo "CONFIG_KRETPROBES=y" >> out/.config
+
+      - name: Build Kernel
+        run: |
+          echo "Building kernel for ${{ env.DEVICE_NAME }}..."
+          cd $GITHUB_WORKSPACE
+          
+          export PATH="${{ env.CLANG_PATH }}/bin:${{ env.GCC_PATH }}/bin:$PATH"
+          export CROSS_COMPILE=${{ env.GCC_PATH }}/bin/aarch64-linux-android-
+          export CC=${{ env.CLANG_PATH }}/bin/clang
+          export LD=${{ env.CLANG_PATH }}/bin/ld.lld
+          export AR=${{ env.CLANG_PATH }}/bin/llvm-ar
+          export NM=${{ env.CLANG_PATH }}/bin/llvm-nm
+          export OBJCOPY=${{ env.CLANG_PATH }}/bin/llvm-objcopy
+          export OBJDUMP=${{ env.CLANG_PATH }}/bin/llvm-objdump
+          export STRIP=${{ env.CLANG_PATH }}/bin/llvm-strip
+          
+          make -j$(nproc) O=out ARCH=${{ env.ARCH }} CC=clang
+
+      - name: Prepare Build Artifacts
+        run: |
+          echo "Preparing build artifacts..."
+          cd $GITHUB_WORKSPACE
+          
+          mkdir -p release_artifacts
+          
+          if [ -f "out/arch/${{ env.ARCH }}/boot/Image" ]; then
+            cp out/arch/${{ env.ARCH }}/boot/Image release_artifacts/
+          fi
+          
+          if [ -f "out/arch/${{ env.ARCH }}/boot/dts/qcom/lahaina.dtb" ]; then
+            cp out/arch/${{ env.ARCH }}/boot/dts/qcom/lahaina.dtb release_artifacts/
+          fi
+          
+          if [ -d "out/lib/modules" ]; then
+            cp -r out/lib/modules release_artifacts/
+          fi
+
+      - name: Create AnyKernel3 Package
+        run: |
+          echo "Creating AnyKernel3 package..."
+          mkdir -p ~/anykernel3
+          cd ~/anykernel3
+          
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+          
+          cp $GITHUB_WORKSPACE/out/arch/${{ env.ARCH }}/boot/Image zImage
+          
+          if [ -f "$GITHUB_WORKSPACE/out/arch/${{ env.ARCH }}/boot/dts/qcom/lahaina.dtb" ]; then
+            cp $GITHUB_WORKSPACE/out/arch/${{ env.ARCH }}/boot/dts/qcom/lahaina.dtb dtb
+          fi
+          
+          zip -r9 $GITHUB_WORKSPACE/release_artifacts/nethunter-${{ env.DEVICE_CODENAME }}-${{ github.run_number }}.zip . -x ".git/*" "*.git"
+
+      - name: Generate Build Info
+        run: |
+          echo "Generating build information..."
+          cat > $GITHUB_WORKSPACE/release_artifacts/BUILD_INFO.txt << EOF
+          Device: ${{ env.DEVICE_NAME }}
+          Codename: ${{ env.DEVICE_CODENAME }}
+          Kernel Branch: ${{ env.KERNEL_BRANCH }}
+          Build Type: ${{ github.event.inputs.build_type }}
+          Build Number: ${{ github.run_number }}
+          Build Date: $(date)
+          Commit: $(git rev-parse --short HEAD)
+          Commit Message: $(git log -1 --pretty=%B)
+          Builder: GitHub Actions
+          EOF
+          
+          cat $GITHUB_WORKSPACE/release_artifacts/BUILD_INFO.txt
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nethunter-kernel-${{ env.DEVICE_CODENAME }}-${{ github.run_number }}
+          path: release_artifacts/
+          retention-days: 30
+
+      - name: Create Release
+        if: github.event.inputs.build_type == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release_artifacts/*
+          tag_name: v${{ github.run_number }}-${{ env.DEVICE_CODENAME }}
+          release_name: NetHunter Kernel for ${{ env.DEVICE_NAME }} - Build ${{ github.run_number }}
+          body_path: release_artifacts/BUILD_INFO.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Build Status
+        if: always()
+        run: |
+          if [ ${{ job.status }} == 'success' ]; then
+            echo "✅ Build completed successfully!"
+            echo "Artifacts: nethunter-kernel-${{ env.DEVICE_CODENAME }}-${{ github.run_number }}"
+          else
+            echo "❌ Build failed!"
+          fi
