@@ -1,0 +1,234 @@
+name: UEFI Bootloader Unlock & Preparation
+
+on:
+  workflow_dispatch:
+    inputs:
+      unlock_method:
+        description: 'Unlock method'
+        required: true
+        default: 'fastboot'
+        type: choice
+        options:
+          - fastboot
+          - adb
+          - recovery
+
+jobs:
+  prepare-unlock:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: lineage-20
+
+      - name: Install Required Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            android-tools-adb \
+            android-tools-fastboot \
+            python3 python3-pip \
+            git curl wget unzip zip \
+            openssl libssl-dev build-essential
+
+      - name: Create Unlock Script - Fastboot Method
+        run: |
+          mkdir -p tools/unlock
+          
+          cat > tools/unlock/fastboot-unlock.sh << 'EOF'
+          #!/bin/bash
+          
+          echo "=========================================="
+          echo "UEFI Bootloader Unlock - Fastboot Method"
+          echo "=========================================="
+          echo ""
+          echo "WARNING: This will unlock your bootloader!"
+          echo "This will erase all user data on your device."
+          echo ""
+          
+          if ! command -v fastboot &> /dev/null; then
+            echo "ERROR: fastboot not found"
+            exit 1
+          fi
+          
+          if ! fastboot devices | grep -q "fastboot"; then
+            echo "ERROR: No devices in fastboot mode"
+            echo "Boot device into fastboot mode first"
+            exit 1
+          fi
+          
+          echo "Found device in fastboot mode"
+          DEVICE_SERIAL=$(fastboot devices | head -1 | awk '{print $1}')
+          
+          echo "Unlocking bootloader..."
+          fastboot -s $DEVICE_SERIAL flashing unlock
+          
+          if [ $? -eq 0 ]; then
+            echo "✓ Bootloader unlocked successfully!"
+          else
+            echo "✗ Failed to unlock bootloader"
+            exit 1
+          fi
+          EOF
+          
+          chmod +x tools/unlock/fastboot-unlock.sh
+
+      - name: Create Unlock Script - ADB Method
+        run: |
+          cat > tools/unlock/adb-unlock.sh << 'EOF'
+          #!/bin/bash
+          
+          echo "=========================================="
+          echo "UEFI Bootloader Unlock - ADB Method"
+          echo "=========================================="
+          echo ""
+          echo "Rebooting to bootloader..."
+          adb reboot bootloader
+          
+          sleep 5
+          
+          if ! fastboot devices | grep -q "fastboot"; then
+            echo "ERROR: Device not in fastboot mode"
+            exit 1
+          fi
+          
+          echo "Unlocking bootloader..."
+          fastboot flashing unlock
+          
+          if [ $? -eq 0 ]; then
+            echo "✓ Bootloader unlocked!"
+            fastboot reboot
+          else
+            echo "✗ Failed to unlock"
+            exit 1
+          fi
+          EOF
+          
+          chmod +x tools/unlock/adb-unlock.sh
+
+      - name: Create Unlock Guide
+        run: |
+          cat > BOOTLOADER_UNLOCK_GUIDE.md << 'EOF'
+          # UEFI Bootloader Unlock Guide - RedMagic 6S Pro
+          
+          ## ⚠️ WARNING
+          
+          Unlocking the bootloader will:
+          - Erase all user data
+          - Void your warranty
+          - Allow custom ROMs and kernels
+          
+          **Backup everything before proceeding!**
+          
+          ## Prerequisites
+          
+          1. Install Android SDK Tools:
+             ```bash
+             sudo apt-get install android-tools-adb android-tools-fastboot
+             ```
+          
+          2. Enable Developer Options:
+             - Settings > About Phone
+             - Tap "Build Number" 7 times
+             - Settings > Developer Options
+             - Enable "USB Debugging"
+          
+          3. Connect device via USB
+          
+          ## Method 1: Fastboot (Recommended)
+          
+          1. Boot into Fastboot:
+             ```bash
+             adb reboot bootloader
+             ```
+          
+          2. Verify connection:
+             ```bash
+             fastboot devices
+             ```
+          
+          3. Unlock:
+             ```bash
+             fastboot flashing unlock
+             ```
+          
+          4. Confirm on device and wait for reboot
+          
+          ## Method 2: ADB
+          
+          Run the provided script:
+          ```bash
+          bash tools/unlock/adb-unlock.sh
+          ```
+          
+          ## Verification
+          
+          ```bash
+          fastboot getvar is-unlocked
+          ```
+          
+          ## Re-locking
+          
+          ```bash
+          fastboot flashing lock
+          ```
+          
+          **Warning:** Re-locking will erase data again!
+          EOF
+          
+          cat BOOTLOADER_UNLOCK_GUIDE.md
+
+      - name: Create Tools Package
+        run: |
+          mkdir -p unlock-tools
+          cp tools/unlock/*.sh unlock-tools/
+          cp BOOTLOADER_UNLOCK_GUIDE.md unlock-tools/
+          
+          cat > unlock-tools/README.txt << 'EOF'
+          UEFI Bootloader Unlock Tools
+          =============================
+          
+          Files:
+          - fastboot-unlock.sh: Fastboot unlock (recommended)
+          - adb-unlock.sh: ADB unlock
+          - BOOTLOADER_UNLOCK_GUIDE.md: Detailed guide
+          
+          Quick Start:
+          1. Enable USB Debugging
+          2. Connect device
+          3. Run: bash fastboot-unlock.sh
+          4. Follow on-screen instructions
+          EOF
+          
+          cd unlock-tools && zip -r ../bootloader-unlock-tools.zip . && cd ..
+
+      - name: Upload Unlock Tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootloader-unlock-tools-${{ github.run_number }}
+          path: |
+            tools/unlock/
+            bootloader-unlock-tools.zip
+            BOOTLOADER_UNLOCK_GUIDE.md
+          retention-days: 30
+
+      - name: Build Complete
+        run: |
+          echo "=========================================="
+          echo "✓ Bootloader Unlock Tools Ready"
+          echo "=========================================="
+          echo ""
+          echo "Download artifacts:"
+          echo "1. bootloader-unlock-tools-${{ github.run_number }}"
+          echo "2. BOOTLOADER_UNLOCK_GUIDE.md"
+          echo ""
+          echo "Next Steps:"
+          echo "1. Extract tools"
+          echo "2. Read guide carefully"
+          echo "3. Back up your device"
+          echo "4. Run unlock script"
+          echo ""
+          echo "=========================================="
