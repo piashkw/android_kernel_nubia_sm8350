@@ -61,6 +61,7 @@ jobs:
             python3-pip \
             ccache
           
+          # Install additional tools
           pip3 install -q --user -U Pillow pycryptodome
 
       - name: Download Clang Toolchain
@@ -69,9 +70,11 @@ jobs:
           mkdir -p ~/toolchains
           cd ~/toolchains
           
+          # Download AOSP Clang
           wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-${{ env.CLANG_VERSION }}.tar.gz
           tar -xzf clang-${{ env.CLANG_VERSION }}.tar.gz
           
+          # Download GCC
           wget -q https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/heads/main.tar.gz
           mkdir -p gcc
           tar -xzf main.tar.gz -C gcc
@@ -85,8 +88,10 @@ jobs:
           mkdir -p ~/nethunter
           cd ~/nethunter
           
-          git clone --depth=1 https://github.com/offensive-security/kali-nethunter-kernel.git
+          # Try to clone NetHunter kernel patches, but continue if it fails
+          git clone --depth=1 https://github.com/offensive-security/kali-nethunter-kernel.git || true
           
+          # Set path even if clone fails (patches are optional)
           echo "NETHUNTER_PATH=~/nethunter/kali-nethunter-kernel" >> $GITHUB_ENV
 
       - name: Apply NetHunter Patches
@@ -94,6 +99,7 @@ jobs:
           echo "Applying NetHunter patches for ${{ env.DEVICE_NAME }}..."
           cd $GITHUB_WORKSPACE
           
+          # Apply patches if they exist (optional)
           if [ -d "${{ env.NETHUNTER_PATH }}/nethunter-patches" ]; then
             for patch in ${{ env.NETHUNTER_PATH }}/nethunter-patches/*.patch; do
               if [ -f "$patch" ]; then
@@ -101,6 +107,8 @@ jobs:
                 git apply "$patch" || echo "Patch $(basename $patch) may not apply cleanly"
               fi
             done
+          else
+            echo "No NetHunter patches found, continuing without them..."
           fi
 
       - name: Configure Kernel
@@ -112,8 +120,10 @@ jobs:
           export CROSS_COMPILE=${{ env.GCC_PATH }}/bin/aarch64-linux-android-
           export CC=${{ env.CLANG_PATH }}/bin/clang
           
+          # Make defconfig
           make O=out ARCH=${{ env.ARCH }} ${{ env.DEFCONFIG }}
           
+          # Optional: Enable NetHunter-specific configs
           echo "CONFIG_KPROBES=y" >> out/.config
           echo "CONFIG_HAVE_KPROBES=y" >> out/.config
           echo "CONFIG_KRETPROBES=y" >> out/.config
@@ -133,6 +143,7 @@ jobs:
           export OBJDUMP=${{ env.CLANG_PATH }}/bin/llvm-objdump
           export STRIP=${{ env.CLANG_PATH }}/bin/llvm-strip
           
+          # Build with multiple jobs
           make -j$(nproc) O=out ARCH=${{ env.ARCH }} CC=clang
 
       - name: Prepare Build Artifacts
@@ -142,14 +153,17 @@ jobs:
           
           mkdir -p release_artifacts
           
+          # Copy kernel image
           if [ -f "out/arch/${{ env.ARCH }}/boot/Image" ]; then
             cp out/arch/${{ env.ARCH }}/boot/Image release_artifacts/
           fi
           
+          # Copy device tree
           if [ -f "out/arch/${{ env.ARCH }}/boot/dts/qcom/lahaina.dtb" ]; then
             cp out/arch/${{ env.ARCH }}/boot/dts/qcom/lahaina.dtb release_artifacts/
           fi
           
+          # Copy modules
           if [ -d "out/lib/modules" ]; then
             cp -r out/lib/modules release_artifacts/
           fi
@@ -160,15 +174,19 @@ jobs:
           mkdir -p ~/anykernel3
           cd ~/anykernel3
           
+          # Clone AnyKernel3
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git
           cd AnyKernel3
           
+          # Copy kernel image
           cp $GITHUB_WORKSPACE/out/arch/${{ env.ARCH }}/boot/Image zImage
           
+          # Copy device tree if available
           if [ -f "$GITHUB_WORKSPACE/out/arch/${{ env.ARCH }}/boot/dts/qcom/lahaina.dtb" ]; then
             cp $GITHUB_WORKSPACE/out/arch/${{ env.ARCH }}/boot/dts/qcom/lahaina.dtb dtb
           fi
           
+          # Create flashable zip
           zip -r9 $GITHUB_WORKSPACE/release_artifacts/nethunter-${{ env.DEVICE_CODENAME }}-${{ github.run_number }}.zip . -x ".git/*" "*.git"
 
       - name: Generate Build Info
