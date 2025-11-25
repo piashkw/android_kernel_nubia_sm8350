@@ -1,0 +1,116 @@
+name: Build RedMagic 6S Pro NetHunter Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type'
+        required: true
+        default: 'test'
+        type: choice
+        options:
+          - test
+          - release
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            build-essential \
+            libssl-dev \
+            libelf-dev \
+            bc \
+            bison \
+            flex \
+            python3 \
+            python3-dev \
+            git \
+            curl \
+            wget \
+            zip \
+            unzip \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu
+          
+          echo "Build dependencies installed"
+          aarch64-linux-gnu-gcc --version
+      
+      - name: Setup Build Environment
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export KBUILD_BUILD_USER=github
+          export KBUILD_BUILD_HOST=github-actions
+          
+          echo "ARCH=$ARCH" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=$CROSS_COMPILE" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_USER=$KBUILD_BUILD_USER" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=$KBUILD_BUILD_HOST" >> $GITHUB_ENV
+      
+      - name: Prepare Kernel Config
+        run: |
+          make O=out ARCH=arm64 lahaina-qgki_defconfig
+          if [ -f "out/.config" ]; then
+            echo "Kernel config prepared successfully"
+          else
+            echo "Config file not found"
+            exit 1
+          fi
+      
+      - name: Build Kernel
+        run: |
+          echo "Building kernel..."
+          make -j$(nproc) O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+          
+          if [ -f "out/arch/arm64/boot/Image" ]; then
+            echo "Kernel build successful!"
+            ls -lh out/arch/arm64/boot/Image
+          else
+            echo "Kernel image not found"
+            exit 1
+          fi
+      
+      - name: Prepare Artifacts
+        if: always()
+        run: |
+          mkdir -p build_artifacts
+          
+          if [ -f "out/arch/arm64/boot/Image" ]; then
+            cp out/arch/arm64/boot/Image build_artifacts/
+          fi
+          
+          if [ -f "out/arch/arm64/boot/dts/qcom/lahaina.dtb" ]; then
+            cp out/arch/arm64/boot/dts/qcom/lahaina.dtb build_artifacts/
+          fi
+          
+          if [ -f "out/.config" ]; then
+            cp out/.config build_artifacts/kernel.config
+          fi
+          
+          ls -la build_artifacts/
+      
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-build-${{ github.run_number }}
+          path: build_artifacts/
+          retention-days: 7
+      
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "Build Status: ${{ job.status }}"
+          echo "Device: Red Magic 6S Pro"
+          echo "Toolchain: System GCC"
