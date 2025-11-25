@@ -1,0 +1,47 @@
+name: Quick Kernel Build
+
+on:
+  workflow_dispatch:
+
+env:
+  KERNEL_BRANCH: lineage-20
+  DEFCONFIG: lahaina-qgki_defconfig
+  ARCH: arm64
+
+jobs:
+  quick-build:
+    name: Quick Build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev libelf-dev bc bison flex git curl wget zip unzip
+
+      - name: Build with Action
+        uses: dabao1955/kernel_build_action@main
+        with:
+          kernel-url: https://github.com/piashlofkw-cyber/android_kernel_nubia_sm8350
+          kernel-branch: lineage-20
+          config: lahaina-qgki_defconfig
+          arch: arm64
+          aosp-gcc: true
+          aosp-clang: true
+          android-version: 13
+          nethunter: true
+          anykernel3: true
+          release: true
+          access-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-build-${{ github.run_number }}
+          path: out/
+          retention-days: 7
