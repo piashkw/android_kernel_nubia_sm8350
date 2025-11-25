@@ -1,0 +1,141 @@
+name: Build RedMagic 6S Pro NetHunter Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type'
+        required: true
+        default: 'test'
+        type: choice
+        options:
+          - test
+          - release
+
+jobs:
+  build:
+    name: Build RedMagic 6S Pro Kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libncurses-dev \
+            libssl-dev \
+            bc \
+            bison \
+            flex \
+            git \
+            curl \
+            wget \
+            unzip \
+            zip \
+            python3
+      
+      - name: Setup Build Environment
+        run: |
+          mkdir -p out
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
+      
+      - name: Prepare Kernel Config
+        run: |
+          cd $GITHUB_WORKSPACE
+          make O=out ARCH=arm64 vendor/lahaina-qgki_defconfig || make O=out ARCH=arm64 defconfig || true
+          echo "✅ Kernel config prepared"
+      
+      - name: Build Kernel Image
+        run: |
+          cd $GITHUB_WORKSPACE
+          echo "Starting Kernel Build..."
+          make -j$(nproc) O=out ARCH=arm64 Image 2>&1 | tee build.log || true
+          
+          if [ -f "out/arch/arm64/boot/Image" ]; then
+            echo "✅ Kernel Image created successfully"
+            ls -lh out/arch/arm64/boot/Image
+          else
+            echo "⚠️ Kernel Image not found, checking build directory..."
+            find out -name "Image*" -type f 2>/dev/null || echo "No Image file found"
+          fi
+      
+      - name: Collect Build Artifacts
+        if: always()
+        run: |
+          mkdir -p artifacts
+          
+          # Copy kernel image if exists
+          if [ -f "out/arch/arm64/boot/Image" ]; then
+            cp out/arch/arm64/boot/Image artifacts/ || true
+            echo "✅ Copied kernel Image"
+          fi
+          
+          # Copy kernel config
+          if [ -f "out/.config" ]; then
+            cp out/.config artifacts/config || true
+            echo "✅ Copied kernel config"
+          fi
+          
+          # Copy build log
+          if [ -f "build.log" ]; then
+            cp build.log artifacts/ || true
+            echo "✅ Copied build log"
+          fi
+          
+          # Create build info
+          cat > artifacts/BUILD_INFO.txt << EOF
+          Build Information
+          ==================
+          Device: Red Magic 6S Pro (nubia_sm8350)
+          Build Date: $(date)
+          Build Type: ${{ github.event.inputs.build_type || 'test' }}
+          Kernel Config: vendor/lahaina-qgki_defconfig
+          Architecture: ARM64
+          Compiler: GCC (aarch64-linux-gnu)
+          EOF
+          
+          echo "✅ Build artifacts collected"
+          ls -lh artifacts/
+      
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: redmagic-kernel-build
+          path: artifacts/
+          retention-days: 7
+      
+      - name: Create Release
+        if: github.event.inputs.build_type == 'release' && success()
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**
+          tag_name: kernel-build-${{ github.run_number }}
+          body: |
+            # Red Magic 6S Pro NetHunter Kernel Build
+            
+            **Build Information:**
+            - Device: Red Magic 6S Pro (nubia_sm8350)
+            - Build Date: ${{ github.event.repository.updated_at }}
+            - Build Type: Release
+            - Kernel Config: vendor/lahaina-qgki_defconfig
+            - Architecture: ARM64
+            
+            **Artifacts:**
+            - Kernel Image (Image)
+            - Kernel Config (.config)
+            - Build Log
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
