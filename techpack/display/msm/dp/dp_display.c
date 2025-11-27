@@ -2879,7 +2879,7 @@ static enum drm_mode_status dp_display_validate_mode(
 	int rc = 0;
 	bool use_default = true;
 #ifdef CONFIG_NUBIA_HDMI_FEATURE
-	static flag = 1;
+	static int flag = 1;
 	static bool debug_en;
 	static int vrefresh;
 	static int hdisplay;
